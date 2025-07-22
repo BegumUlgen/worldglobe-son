@@ -2,6 +2,13 @@
 
 # dependencies
 node_modules/
+android/
+ios/
+*.log
+*.expo
+*.DS_Store
+.expo/
+
 
 # Expo
 .expo/
