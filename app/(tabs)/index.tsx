@@ -17,7 +17,6 @@ import {
 } from 'react-native';
 import { GestureHandlerRootView, PanGestureHandler, PinchGestureHandler, PinchGestureHandlerGestureEvent } from 'react-native-gesture-handler';
 import * as THREE from 'three';
-import { iOSCanvasSupport } from '@/utils/canvasPolyfill';
 
 const { width, height } = Dimensions.get('window');
 
@@ -47,96 +46,47 @@ type GeoJSONFeature = {
   properties: { [key: string]: any };
 };
 
-// Mobil uyumlu text texture oluşturma - React Native için optimize edilmiş
-const createMobileTextTexture = (text: string, fontSize: number = 24): THREE.Texture => {
+// Expo Go uyumlu ülke marker oluşturma - Canvas kullanmadan
+const createCountryMarker = (countryName: string, priority: number, currentZoom: number) => {
   try {
-    console.log(`Creating texture for: ${text}`);
+    console.log(`Creating marker for: ${countryName} (priority: ${priority})`);
     
-    // Canvas boyutlarını küçült (mobil performans için)
-    const canvasWidth = 256;
-    const canvasHeight = 64;
+    // Öncelik ve zoom bazlı renk ve boyut
+    const colorMap = {
+      1: 0xff4444, // Kırmızı - en önemli ülkeler
+      2: 0x44ff44, // Yeşil - orta önem
+      3: 0x4444ff  // Mavi - düşük önem
+    };
     
-    let canvas: any = null;
-    let ctx: any = null;
+    const sizeMap = {
+      1: 0.15,
+      2: 0.12,
+      3: 0.10
+    };
     
-    // React Native ortamında farklı canvas stratejileri dene
-    if (Platform.OS === 'web') {
-      // Web için normal canvas
-      if (typeof document !== 'undefined') {
-        canvas = document.createElement('canvas');
-        canvas.width = canvasWidth;
-        canvas.height = canvasHeight;
-        ctx = canvas.getContext('2d');
-      }
-    } else {
-      // React Native için - Expo GL canvas kullanmayı dene
-      try {
-        if (typeof OffscreenCanvas !== 'undefined') {
-          canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
-          ctx = canvas.getContext('2d');
-        } else if (typeof document !== 'undefined' && document.createElement) {
-          // Bazen React Native'de document mevcut olabiliyor
-          canvas = document.createElement('canvas');
-          canvas.width = canvasWidth;
-          canvas.height = canvasHeight;
-          ctx = canvas.getContext('2d');
-        }
-      } catch (e) {
-        console.log('OffscreenCanvas not available, trying alternative');
-      }
-    }
+    const color = colorMap[priority as keyof typeof colorMap] || 0xffff00;
+    const baseSize = sizeMap[priority as keyof typeof sizeMap] || 0.10;
+    const finalSize = baseSize * Math.max(0.5, Math.min(2.5, currentZoom));
     
-    if (!canvas || !ctx) {
-      console.warn(`Canvas not available for ${text}, falling back to simple sprite`);
-      // Canvas yoksa boş texture döndür, fallback sprite kullanılacak
-      const emptyTexture = new THREE.Texture();
-      emptyTexture.needsUpdate = true;
-      return emptyTexture;
-    }
-
-    // Context ayarları
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    // Basit küre geometrisi oluştur (Canvas'sız)
+    const geometry = new THREE.SphereGeometry(finalSize, 8, 8);
+    const material = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.8,
+    });
     
-    // Mobil için basit font ayarları
-    const adjustedFontSize = Math.min(fontSize, 20); // Maksimum font boyutu
-    const fontFamily = Platform.OS === 'ios' ? '-apple-system' : 
-                      Platform.OS === 'android' ? 'Roboto' : 'Arial';
+    const marker = new THREE.Mesh(geometry, material);
     
-    ctx.font = `bold ${adjustedFontSize}px ${fontFamily}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.imageSmoothingEnabled = true;
-    
-    // Arka plan - sadece
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    ctx.fillRect(5, canvasHeight/2 - adjustedFontSize/2 - 4, 
-                 canvasWidth - 10, adjustedFontSize + 8);
-    
-    // Text outline (stroke) önce
-    ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
-    ctx.lineWidth = 3;
-    ctx.strokeText(text, canvasWidth / 2, canvasHeight / 2);
-    
-    // Text fill sonra
-    ctx.fillStyle = 'rgba(255, 255, 255, 1)';
-    ctx.fillText(text, canvasWidth / 2, canvasHeight / 2);
-    
-    // Texture oluştur
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.needsUpdate = true;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.format = THREE.RGBAFormat;
-    texture.flipY = false; // React Native için önemli
-    
-    console.log(`Texture created successfully for: ${text}`);
-    return texture;
+    console.log(`Created marker for ${countryName}: color=${color.toString(16)}, size=${finalSize.toFixed(3)}`);
+    return marker;
   } catch (error) {
-    console.warn(`Text texture creation failed for ${text}:`, error);
-    // Hata durumunda boş texture döndür
-    const emptyTexture = new THREE.Texture();
-    emptyTexture.needsUpdate = true;
-    return emptyTexture;
+    console.warn(`Marker creation failed for ${countryName}:`, error);
+    
+    // Fallback: basit küre
+    const fallbackGeometry = new THREE.SphereGeometry(0.08, 6, 6);
+    const fallbackMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, opacity: 0.7, transparent: true });
+    return new THREE.Mesh(fallbackGeometry, fallbackMaterial);
   }
 };
 
@@ -170,7 +120,7 @@ export default function App() {
   const earthGroupRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const scale = useRef(1);
-  const labelsRef = useRef<THREE.Sprite[]>([]);
+  const labelsRef = useRef<THREE.Mesh[]>([]); // Sprite yerine Mesh kullanıyoruz
   const lastZoomLevel = useRef(0);
 
   const bottomSheetRef = useRef<BottomSheet>(null);
@@ -300,20 +250,29 @@ export default function App() {
       .filter(Boolean) as CountryLabel[];
   }, []);
 
-  // Zoom seviyesine göre label'ları filtrele - mobil için optimize edilmiş
+  // Zoom seviyesine göre label'ları filtrele - Expo Go için optimize edilmiş
   const getVisibleLabels = (zoomLevel: number): CountryLabel[] => {
-    // Mobil cihazlarda daha düşük threshold'lar kullan
-    const isWebPlatform = Platform.OS === 'web';
+    console.log(`🔍 Filtering labels for zoom: ${zoomLevel.toFixed(2)}`);
     
-    if (zoomLevel < (isWebPlatform ? 1.2 : 0.8)) {
-      // Uzak zoom - sadece Tier 1 (büyük ülkeler)
-      return countryLabels.filter(label => label.priority === 1);
-    } else if (zoomLevel < (isWebPlatform ? 2.0 : 1.5)) {
-      // Orta zoom - Tier 1 ve 2
-      return countryLabels.filter(label => label.priority <= 2);
+    // Mobil cihazlarda çok daha düşük threshold'lar - hemen görünmeli
+    if (Platform.OS !== 'web') {
+      // Expo Go için - hemen baştan ülkeleri göster
+      if (zoomLevel < 1.2) {
+        return countryLabels.filter(label => label.priority === 1); // 8 ülke
+      } else if (zoomLevel < 2.5) {
+        return countryLabels.filter(label => label.priority <= 2); // 23 ülke
+      } else {
+        return countryLabels.filter(label => label.priority <= 3); // Tüm ülkeler
+      }
     } else {
-      // Yakın zoom - Tüm tier'lar
-      return countryLabels.filter(label => label.priority <= 3);
+      // Web için
+      if (zoomLevel < 1.2) {
+        return countryLabels.filter(label => label.priority === 1);
+      } else if (zoomLevel < 2.0) {
+        return countryLabels.filter(label => label.priority <= 2);
+      } else {
+        return countryLabels.filter(label => label.priority <= 3);
+      }
     }
   };
 
@@ -388,7 +347,7 @@ export default function App() {
     }
   };
 
-  // Mobil uyumlu label sistemi - React Native için optimize edilmiş
+  // Expo Go uyumlu label sistemi - Tamamen Canvas'sız
   const addCountryLabelsToGlobe = () => {
     if (!earthGroupRef.current || !cameraRef.current) return;
     
@@ -404,97 +363,51 @@ export default function App() {
     lastZoomLevel.current = currentZoom;
     
     // Önceki label'ları temizle
-    labelsRef.current.forEach(sprite => {
-      earthGroupRef.current?.remove(sprite);
-      if (sprite.material.map) {
-        sprite.material.map.dispose();
+    labelsRef.current.forEach(marker => {
+      earthGroupRef.current?.remove(marker);
+      if (marker.geometry) {
+        marker.geometry.dispose();
       }
-      sprite.material.dispose();
+      if (marker.material instanceof THREE.Material) {
+        marker.material.dispose();
+      }
     });
     labelsRef.current = [];
     
     // Zoom seviyesine göre görünür label'ları al
     const visibleLabels = getVisibleLabels(currentZoom);
-    console.log(`Platform: ${Platform.OS}, Zoom: ${currentZoom.toFixed(2)}, Visible labels: ${visibleLabels.length}`);
+    console.log(`🌍 Platform: ${Platform.OS}, Zoom: ${currentZoom.toFixed(2)}, Creating ${visibleLabels.length} country markers`);
     
     visibleLabels.forEach(({ name, position, priority }) => {
       try {
-        // Mobil ve web için farklı stratejiler
-        if (Platform.OS === 'web') {
-          // Web'de text texture kullan
-          const fontSize = Math.max(16, Math.min(28, 18 * currentZoom));
-          const texture = createMobileTextTexture(name, fontSize);
-          
-          if (texture && (texture.image || texture.source)) {
-            const spriteMaterial = new THREE.SpriteMaterial({
-              map: texture,
-              transparent: true,
-              alphaTest: 0.1,
-              depthTest: false,
-              depthWrite: false,
-            });
-
-            const sprite = new THREE.Sprite(spriteMaterial);
-            sprite.position.copy(position);
-            
-            const baseSize = priority === 1 ? 0.4 : priority === 2 ? 0.3 : 0.25;
-            const sizeMultiplier = Math.max(0.6, Math.min(1.5, currentZoom * 0.7));
-            sprite.scale.set(baseSize * sizeMultiplier, baseSize * sizeMultiplier * 0.4, 1);
-            
-            earthGroupRef.current?.add(sprite);
-            labelsRef.current.push(sprite);
-            console.log(`Added text label for ${name} (web)`);
-          } else {
-            throw new Error('Texture creation failed on web');
-          }
-        } else {
-          // React Native'de her zaman basit sprite kullan (daha güvenilir)
-          const colors = {
-            1: 0xffffff, // Beyaz - en önemli ülkeler
-            2: 0xffff00, // Sarı - orta önem
-            3: 0x00ffff  // Cyan - düşük önem
-          };
-          
-          const sizes = {
-            1: 0.12,
-            2: 0.10,
-            3: 0.08
-          };
-          
-          const color = colors[priority as keyof typeof colors] || 0xcccccc;
-          const baseSize = sizes[priority as keyof typeof sizes] || 0.08;
-          const finalSize = baseSize * Math.max(0.8, Math.min(2, currentZoom));
-          
-          const spriteMaterial = new THREE.SpriteMaterial({
-            color: color,
-            transparent: true,
-            opacity: 0.9,
-            sizeAttenuation: false, // Boyut kameraya göre değişmesin
-          });
-          
-          const sprite = new THREE.Sprite(spriteMaterial);
-          sprite.position.copy(position);
-          sprite.scale.set(finalSize, finalSize, 1);
-          
-          earthGroupRef.current?.add(sprite);
-          labelsRef.current.push(sprite);
-          console.log(`Added colored sprite for ${name} (mobile, priority: ${priority}, color: ${color.toString(16)})`);
-        }
+        // Canvas'sız marker oluştur
+        const marker = createCountryMarker(name, priority, currentZoom);
+        marker.position.copy(position);
+        
+        earthGroupRef.current?.add(marker);
+        labelsRef.current.push(marker);
+        
+        console.log(`✅ Added marker for ${name} (priority: ${priority})`);
       } catch (error) {
-        console.warn(`Label creation failed for ${name}:`, error);
-        // Hata durumunda kırmızı fallback sprite
-        const fallbackSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-          color: 0xff0000,
-          transparent: true,
-          opacity: 0.7,
-        }));
-        fallbackSprite.position.copy(position);
-        fallbackSprite.scale.set(0.06, 0.06, 1);
-        earthGroupRef.current?.add(fallbackSprite);
-        labelsRef.current.push(fallbackSprite);
-        console.log(`Added fallback sprite for ${name}`);
+        console.warn(`❌ Marker creation failed for ${name}:`, error);
+        
+        // En basit fallback marker
+        const fallbackGeometry = new THREE.SphereGeometry(0.06, 6, 6);
+        const fallbackMaterial = new THREE.MeshBasicMaterial({ 
+          color: 0xff0000, 
+          transparent: true, 
+          opacity: 0.8 
+        });
+        const fallbackMarker = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+        fallbackMarker.position.copy(position);
+        
+        earthGroupRef.current?.add(fallbackMarker);
+        labelsRef.current.push(fallbackMarker);
+        console.log(`🔴 Added fallback marker for ${name}`);
       }
     });
+    
+    console.log(`🎯 Total markers added: ${labelsRef.current.length}`);
   };
 
   const onPinchEvent = (event: PinchGestureHandlerGestureEvent) => {
@@ -689,11 +602,11 @@ export default function App() {
                         }
                       });
 
-                      // İlk label ekleme - mobil uyumlu
+                      // İlk marker ekleme - Expo Go uyumlu
                       setTimeout(() => {
-                        console.log('Adding initial labels...');
+                        console.log('🚀 Adding initial country markers...');
                         addCountryLabelsToGlobe();
-                      }, Platform.OS === 'web' ? 1000 : 2500); // Mobilde daha geç başlat
+                      }, 500); // Kısa gecikme ile hemen başlat
                     }
 
                     updateMarkers();
