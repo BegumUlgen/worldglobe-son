@@ -12,10 +12,12 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
+  Platform
 } from 'react-native';
 import { GestureHandlerRootView, PanGestureHandler, PinchGestureHandler, PinchGestureHandlerGestureEvent } from 'react-native-gesture-handler';
 import * as THREE from 'three';
+import { iOSCanvasSupport } from '@/utils/canvasPolyfill';
 
 const { width, height } = Dimensions.get('window');
 
@@ -33,6 +35,7 @@ type SelectedPoints = {
 type CountryLabel = {
   name: string;
   position: THREE.Vector3;
+  priority: number; // Yeni: öncelik sistemi
 };
 
 type GeoJSONFeature = {
@@ -44,67 +47,102 @@ type GeoJSONFeature = {
   properties: { [key: string]: any };
 };
 
-// Mobil uyumlu text texture oluşturma
-const createTextTexture = (text: string): THREE.Texture => {
+// iOS mobil uyumlu gelişmiş text texture oluşturma
+const createMobileTextTexture = (text: string, fontSize: number = 24): THREE.Texture => {
   try {
-    let canvas: HTMLCanvasElement | OffscreenCanvas | null = null;
+    // Canvas boyutlarını optimize et
+    const canvasWidth = 512;
+    const canvasHeight = 128;
     
-    // Web ortamında document varsa normal canvas kullan
-    if (typeof document !== 'undefined' && document.createElement) {
-      canvas = document.createElement('canvas');
-    } 
-    // Mobil ortamda OffscreenCanvas varsa onu kullan
-    else if (typeof OffscreenCanvas !== 'undefined') {
-      canvas = new OffscreenCanvas(256, 128);
-    }
+    // iOS güvenli canvas oluşturma
+    const canvas = iOSCanvasSupport.createSafeCanvas(canvasWidth, canvasHeight);
     
     if (!canvas) {
-      console.warn('Canvas not available');
+      console.warn('Canvas not available for text texture');
       return new THREE.Texture();
     }
 
-    canvas.width = 256;
-    canvas.height = 128;
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    
     const ctx = canvas.getContext('2d');
-
     if (!ctx) {
       console.warn('Canvas context not available');
       return new THREE.Texture();
     }
 
-    // Text rendering
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.font = 'bold 20px Arial';
+    // iOS için optimized text rendering
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    
+    // Anti-aliasing ve smooth rendering
+    ctx.imageSmoothingEnabled = true;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    // Font ayarları - iOS uyumlu
+    const fontFamily = Platform.OS === 'ios' ? 'System' : 'Arial';
+    ctx.font = `bold ${fontSize}px ${fontFamily}`;
+    
+    // Gölge efekti
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetX = 2;
+    ctx.shadowOffsetY = 2;
+    
+    // Text boyutunu kontrol et ve gerekirse küçült
+    const textMetrics = ctx.measureText(text);
+    let adjustedFontSize = fontSize;
+    
+    while (textMetrics.width > canvasWidth - 20 && adjustedFontSize > 12) {
+      adjustedFontSize -= 2;
+      ctx.font = `bold ${adjustedFontSize}px ${fontFamily}`;
+    }
+    
+    // Arka plan (isteğe bağlı - şeffaf panel)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    if (ctx.roundRect) {
+      ctx.roundRect(10, canvasHeight/2 - adjustedFontSize/2 - 8, 
+                    canvasWidth - 20, adjustedFontSize + 16, 8);
+    } else {
+      // Fallback: normal dikdörtgen
+      ctx.fillRect(10, canvasHeight/2 - adjustedFontSize/2 - 8, 
+                   canvasWidth - 20, adjustedFontSize + 16);
+    }
+    ctx.fill();
+    
+    // Text çizimi
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillText(text, canvasWidth / 2, canvasHeight / 2);
+    
+    // Outline
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.lineWidth = 2;
+    ctx.strokeText(text, canvasWidth / 2, canvasHeight / 2);
 
     const texture = new THREE.CanvasTexture(canvas as any);
     texture.needsUpdate = true;
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
+    texture.format = THREE.RGBAFormat;
+    
     return texture;
   } catch (error) {
-    console.warn('Text texture creation failed:', error);
+    console.warn('Mobile text texture creation failed:', error);
     return new THREE.Texture();
   }
 };
 
-// Alternatif: Basit sprite tabanlı label sistemi (canvas olmadan)
-const createSimpleSprite = (color: number = 0xffffff): THREE.Sprite => {
-  // Canvas yerine basit renk tabanlı sprite material
+// Fallback simple sprite for iOS compatibility
+const createSimpleSprite = (color: number = 0xffffff, size: number = 0.05): THREE.Sprite => {
   const spriteMaterial = new THREE.SpriteMaterial({
     color: color,
     transparent: true,
     opacity: 0.8,
   });
   
-  return new THREE.Sprite(spriteMaterial);
+  const sprite = new THREE.Sprite(spriteMaterial);
+  sprite.scale.set(size, size, 1);
+  return sprite;
 };
 
 export default function App() {
@@ -125,6 +163,7 @@ export default function App() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const scale = useRef(1);
   const labelsRef = useRef<THREE.Sprite[]>([]);
+  const lastZoomLevel = useRef(0);
 
   const bottomSheetRef = useRef<BottomSheet>(null);
   const snapPoints = useMemo(() => ['25%', '50%', '85%'], []);
@@ -155,23 +194,85 @@ export default function App() {
     }
   };
 
-  // Country labels - mobil performans için daha da optimize edilmiş
+  // Gelişmiş ülke label sistemi - iOS uyumlu ve zoom tabanlı
   const countryLabels = useMemo(() => {
     const geoData = countriesGeoJSON as FeatureCollection;
     if (!geoData?.features) return [];
 
-    // Daha fazla ülke gösterelim ama performanslı şekilde
-    const majorCountries = ['Turkey', 'United States', 'China', 'Russia', 'Brazil', 'India', 'Germany', 'France', 'United Kingdom', 'Japan'];
+    // Öncelik tabanlı ülke listesi
+    const countryPriorities: { [key: string]: number } = {
+      // Tier 1 - Her zaman görünür (büyük ülkeler)
+      'Turkey': 1,
+      'United States of America': 1,
+      'China': 1,
+      'Russia': 1,
+      'Brazil': 1,
+      'India': 1,
+      'Canada': 1,
+      'Australia': 1,
+      
+      // Tier 2 - Orta zoom'da görünür
+      'Germany': 2,
+      'France': 2,
+      'United Kingdom': 2,
+      'Japan': 2,
+      'Italy': 2,
+      'Spain': 2,
+      'Mexico': 2,
+      'Argentina': 2,
+      'South Africa': 2,
+      'Egypt': 2,
+      'Iran': 2,
+      'Saudi Arabia': 2,
+      'Indonesia': 2,
+      'Thailand': 2,
+      'South Korea': 2,
+      
+      // Tier 3 - Yüksek zoom'da görünür
+      'Poland': 3,
+      'Ukraine': 3,
+      'Norway': 3,
+      'Sweden': 3,
+      'Finland': 3,
+      'Greece': 3,
+      'Portugal': 3,
+      'Netherlands': 3,
+      'Belgium': 3,
+      'Switzerland': 3,
+      'Austria': 3,
+      'Czech Republic': 3,
+      'Hungary': 3,
+      'Romania': 3,
+      'Bulgaria': 3,
+      'Croatia': 3,
+      'Serbia': 3,
+      'Chile': 3,
+      'Peru': 3,
+      'Venezuela': 3,
+      'Colombia': 3,
+      'Nigeria': 3,
+      'Kenya': 3,
+      'Morocco': 3,
+      'Israel': 3,
+      'Iraq': 3,
+      'Afghanistan': 3,
+      'Pakistan': 3,
+      'Bangladesh': 3,
+      'Myanmar': 3,
+      'Vietnam': 3,
+      'Philippines': 3,
+      'Malaysia': 3,
+      'New Zealand': 3,
+    };
     
     return geoData.features
       .filter((feature: Feature<Geometry, GeoJsonProperties>) => 
-        feature.properties?.name && majorCountries.includes(feature.properties.name)
+        feature.properties?.NAME && countryPriorities[feature.properties.NAME]
       )
-      .slice(0, 10) // 10 ülkeye çıkardık
       .map((feature: Feature<Geometry, GeoJsonProperties>) => {
-        if (!feature.properties?.name || !feature.geometry) return null;
+        if (!feature.properties?.NAME || !feature.geometry) return null;
         
-        const { name } = feature.properties;
+        const name = feature.properties.NAME;
         const geometry = feature.geometry;
         
         if (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') return null;
@@ -182,10 +283,28 @@ export default function App() {
         if (!center) return null;
         
         const { x, y, z } = coordsTo3D(center.lat, center.lon, 1.02);
-        return { name, position: new THREE.Vector3(x, y, z) };
+        return { 
+          name, 
+          position: new THREE.Vector3(x, y, z),
+          priority: countryPriorities[name] || 4
+        };
       })
       .filter(Boolean) as CountryLabel[];
   }, []);
+
+  // Zoom seviyesine göre label'ları filtrele
+  const getVisibleLabels = (zoomLevel: number): CountryLabel[] => {
+    if (zoomLevel < 1.2) {
+      // Çok uzak - sadece Tier 1
+      return countryLabels.filter(label => label.priority === 1);
+    } else if (zoomLevel < 2.0) {
+      // Orta zoom - Tier 1 ve 2
+      return countryLabels.filter(label => label.priority <= 2);
+    } else {
+      // Yakın zoom - Tüm tier'lar
+      return countryLabels.filter(label => label.priority <= 3);
+    }
+  };
 
   const updateMarkers = () => {
     if (!sceneRef.current || !earthGroupRef.current) return;
@@ -258,9 +377,20 @@ export default function App() {
     }
   };
 
-  // Mobil uyumlu label ekleme fonksiyonu
+  // iOS uyumlu ve zoom tabanlı label sistemi
   const addCountryLabelsToGlobe = () => {
-    if (!earthGroupRef.current) return;
+    if (!earthGroupRef.current || !cameraRef.current) return;
+    
+    // Zoom seviyesini hesapla
+    const currentZoom = 3 / cameraRef.current.position.z;
+    const zoomChanged = Math.abs(currentZoom - lastZoomLevel.current) > 0.1;
+    
+    // Zoom değişmediyse ve label'lar varsa güncelleme yapma
+    if (!zoomChanged && labelsRef.current.length > 0) {
+      return;
+    }
+    
+    lastZoomLevel.current = currentZoom;
     
     // Önceki label'ları temizle
     labelsRef.current.forEach(sprite => {
@@ -272,59 +402,79 @@ export default function App() {
     });
     labelsRef.current = [];
     
-    // Zoom seviyesinden bağımsız olarak label'ları göster (test için)
-    console.log('Adding country labels, scale:', scale.current);
+    // Zoom seviyesine göre görünür label'ları al
+    const visibleLabels = getVisibleLabels(currentZoom);
+    console.log(`Zoom: ${currentZoom.toFixed(2)}, Visible labels: ${visibleLabels.length}`);
     
-    countryLabels.forEach(({ name, position }) => {
+    visibleLabels.forEach(({ name, position, priority }) => {
       try {
-        const texture = createTextTexture(name);
+        // iOS performans optimizasyonu
+        const shouldUseTexture = Platform.OS !== 'ios' || currentZoom > 1.5;
         
-        // Texture başarıyla oluşturuldu mu kontrol et
-        if (texture) {
-          const spriteMaterial = new THREE.SpriteMaterial({
-            map: texture,
-            transparent: true,
-            alphaTest: 0.1,
-          });
+        if (shouldUseTexture) {
+          // Text texture ile detaylı label
+          const fontSize = Math.max(18, Math.min(32, 20 * currentZoom));
+          const texture = createMobileTextTexture(name, fontSize);
+          
+          if (texture && texture.image) {
+            const spriteMaterial = new THREE.SpriteMaterial({
+              map: texture,
+              transparent: true,
+              alphaTest: 0.1,
+              depthTest: false, // iOS için önemli
+              depthWrite: false,
+            });
 
-          const sprite = new THREE.Sprite(spriteMaterial);
-          sprite.position.copy(position);
-          sprite.scale.set(0.2, 0.1, 1); // Biraz büyüttük
-          earthGroupRef.current?.add(sprite);
-          labelsRef.current.push(sprite);
-          console.log(`Added label for ${name}`);
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.position.copy(position);
+            
+            // Zoom ve öncelik tabanlı boyut
+            const baseSize = priority === 1 ? 0.3 : priority === 2 ? 0.25 : 0.2;
+            const sizeMultiplier = Math.max(0.5, Math.min(2, currentZoom * 0.8));
+            sprite.scale.set(baseSize * sizeMultiplier, baseSize * sizeMultiplier * 0.5, 1);
+            
+            earthGroupRef.current?.add(sprite);
+            labelsRef.current.push(sprite);
+            console.log(`Added text label for ${name} (priority: ${priority})`);
+          } else {
+            throw new Error('Texture creation failed');
+          }
         } else {
-          // Fallback: basit renkli nokta
-          const simpleSprite = createSimpleSprite(0xffffff);
+          // Basit nokta sprite (iOS düşük zoom için)
+          const color = priority === 1 ? 0xffffff : priority === 2 ? 0xcccccc : 0x999999;
+          const size = priority === 1 ? 0.08 : priority === 2 ? 0.06 : 0.04;
+          const simpleSprite = createSimpleSprite(color, size * currentZoom);
           simpleSprite.position.copy(position);
-          simpleSprite.scale.set(0.05, 0.05, 1);
           earthGroupRef.current?.add(simpleSprite);
           labelsRef.current.push(simpleSprite);
-          console.log(`Added simple sprite for ${name}`);
+          console.log(`Added simple sprite for ${name} (priority: ${priority})`);
         }
       } catch (error) {
         console.warn(`Label creation failed for ${name}:`, error);
         // Hata durumunda basit sprite ekle
-        const simpleSprite = createSimpleSprite(0xffff00);
-        simpleSprite.position.copy(position);
-        simpleSprite.scale.set(0.03, 0.03, 1);
-        earthGroupRef.current?.add(simpleSprite);
-        labelsRef.current.push(simpleSprite);
+        const fallbackColor = 0xff6666;
+        const fallbackSprite = createSimpleSprite(fallbackColor, 0.04);
+        fallbackSprite.position.copy(position);
+        earthGroupRef.current?.add(fallbackSprite);
+        labelsRef.current.push(fallbackSprite);
       }
     });
   };
 
   const onPinchEvent = (event: PinchGestureHandlerGestureEvent) => {
-    if (event.nativeEvent.scale) {
-      const newScale = Math.min(Math.max(event.nativeEvent.scale, 0.5), 3);
+    if (event.nativeEvent.scale && cameraRef.current) {
+      const newScale = Math.min(Math.max(event.nativeEvent.scale, 0.5), 5); // Daha fazla zoom
       scale.current = newScale;
       
-      if (cameraRef.current) {
-        cameraRef.current.position.z = 3 / newScale;
-      }
+      // Smooth zoom transition için
+      const targetZ = 3 / newScale;
+      cameraRef.current.position.z = targetZ;
       
-      // Label görünürlüğünü güncelle
-      addCountryLabelsToGlobe();
+      // Label görünürlüğünü güncelle (debounced)
+      clearTimeout(window.labelUpdateTimeout);
+      window.labelUpdateTimeout = setTimeout(() => {
+        addCountryLabelsToGlobe();
+      }, 100);
     }
   };
 
@@ -332,10 +482,8 @@ export default function App() {
     updateMarkers();
   }, [selectedPoints]);
 
-  useEffect(() => {
-    // Scale'den bağımsız olarak label'ları göster (test için)
-    addCountryLabelsToGlobe();
-  }, [scale.current]);
+  // Performans optimizasyonu için useEffect'i kaldırdık
+  // Label güncellemesi artık sadece zoom değişiminde yapılıyor
 
   // Örnek lokasyon verileri
   const sampleLocations = [
@@ -362,9 +510,10 @@ export default function App() {
         <PinchGestureHandler onGestureEvent={onPinchEvent}>
           <PanGestureHandler
             onGestureEvent={(event) => {
-              // Mobil için optimize edilmiş hareket hassasiyeti
-              rotationVelocity.current.y += event.nativeEvent.translationX * 0.000005;
-              rotationVelocity.current.x += event.nativeEvent.translationY * 0.000005;
+              // iOS için optimize edilmiş hareket hassasiyeti
+              const sensitivity = Platform.OS === 'ios' ? 0.000003 : 0.000005;
+              rotationVelocity.current.y += event.nativeEvent.translationX * sensitivity;
+              rotationVelocity.current.x += event.nativeEvent.translationY * sensitivity;
             }}
           >
             <View style={{ flex: 1 }}>
@@ -375,11 +524,17 @@ export default function App() {
                     const renderer = new Renderer({ gl });
                     renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
                     
-                    // Mobil performans için pixel ratio optimizasyonu
-                    const pixelRatio = typeof window !== 'undefined' && window.devicePixelRatio 
-                      ? Math.min(2, window.devicePixelRatio) 
-                      : 1;
+                    // iOS mobil performans için pixel ratio optimizasyonu
+                    const pixelRatio = Platform.OS === 'ios' 
+                      ? Math.min(1.5, window?.devicePixelRatio || 1) 
+                      : Math.min(2, window?.devicePixelRatio || 1);
                     renderer.setPixelRatio(pixelRatio);
+                    
+                    // iOS için ek renderer ayarları
+                    if (Platform.OS === 'ios') {
+                      renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight, false);
+                      renderer.outputEncoding = THREE.sRGBEncoding;
+                    }
 
                     const scene = new THREE.Scene();
                     sceneRef.current = scene;
@@ -421,10 +576,18 @@ export default function App() {
                     );
                     scene.add(starSphere);
 
-                    // Earth sphere and group - mobil performans için optimize edilmiş
-                    const earthMaterial = new THREE.MeshBasicMaterial({ map: earthTexture });
+                    // Earth sphere and group - iOS performans optimizasyonu
+                    const earthMaterial = new THREE.MeshBasicMaterial({ 
+                      map: earthTexture,
+                      // iOS için performans optimizasyonu
+                      transparent: false,
+                      alphaTest: 0,
+                    });
+                    
+                    // iOS için daha düşük segment sayısı
+                    const segments = Platform.OS === 'ios' ? 20 : 24;
                     const earthSphere = new THREE.Mesh(
-                      new THREE.SphereGeometry(1, 24, 24), // Segment sayısı daha da azaltıldı
+                      new THREE.SphereGeometry(1, segments, segments),
                       earthMaterial
                     );
 
@@ -435,11 +598,12 @@ export default function App() {
                     earthGroup.position.set(-1, -1, -1);
                     earthGroup.scale.set(1, 1, 1);
 
-                    // GeoJSON Wireframe - mobil performans için optimize edilmiş
+                    // GeoJSON Wireframe - iOS performans optimizasyonu
                     const geoData = countriesGeoJSON as FeatureCollection;
                     if (geoData && geoData.features && earthGroupRef.current) {
                       let lineCount = 0;
-                      const maxLines = 200; // Mobil performans sınırı daha da düşürüldü
+                      // iOS için daha da düşük sınır
+                      const maxLines = Platform.OS === 'ios' ? 150 : 200;
 
                       geoData.features.forEach((feature: Feature<Geometry, GeoJsonProperties>) => {
                         if (lineCount >= maxLines) return;
@@ -459,8 +623,9 @@ export default function App() {
                                 if (ring.length > 2 && lineCount < maxLines) {
                                   const points: THREE.Vector3[] = [];
 
-                                  // Mobil performans için her 3. noktayı al
-                                  for (let i = 0; i < ring.length; i += 3) {
+                                  // iOS performans için her 4. noktayı al, diğer platformlarda her 3.
+                                  const step = Platform.OS === 'ios' ? 4 : 3;
+                                  for (let i = 0; i < ring.length; i += step) {
                                     const [lon, lat] = ring[i];
                                     const { x, y, z } = coordsTo3D(lat, lon, 1.005);
                                     points.push(new THREE.Vector3(x, y, z));
@@ -486,10 +651,10 @@ export default function App() {
                         }
                       });
 
-                      // İlk label ekleme - mobil uyumlu
+                      // İlk label ekleme - iOS uyumlu
                       setTimeout(() => {
                         addCountryLabelsToGlobe();
-                      }, 1000); // Sahne yüklendikten sonra label'ları ekle
+                      }, 1500); // Sahne tamamen yüklendikten sonra label'ları ekle
                     }
 
                     updateMarkers();
@@ -500,9 +665,10 @@ export default function App() {
                       rotation.current.x += rotationVelocity.current.x;
                       rotation.current.y += rotationVelocity.current.y;
 
-                      // Mobil için yumuşak momentum
-                      rotationVelocity.current.x *= 0.95;
-                      rotationVelocity.current.y *= 0.95;
+                      // iOS için yumuşak momentum
+                      const momentum = Platform.OS === 'ios' ? 0.92 : 0.95;
+                      rotationVelocity.current.x *= momentum;
+                      rotationVelocity.current.y *= momentum;
 
                       if (earthGroup) {
                         earthGroup.rotation.x = rotation.current.x;
