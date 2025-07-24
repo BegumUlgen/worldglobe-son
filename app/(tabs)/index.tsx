@@ -155,7 +155,7 @@ export default function App() {
   });
   const [distance, setDistance] = useState<number | null>(null);
 
-  const rotation = useRef({ x: 0, y: 0 });
+  const rotation = useRef({ x: 0.1, y: 0.2 }); // Daha güzel başlangıç açısı
   const rotationVelocity = useRef({ x: 0, y: 0 });
   const sceneRef = useRef<THREE.Scene | null>(null);
   const markersRef = useRef<THREE.Mesh[]>([]);
@@ -466,9 +466,10 @@ export default function App() {
       const newScale = Math.min(Math.max(event.nativeEvent.scale, 0.5), 5); // Daha fazla zoom
       scale.current = newScale;
       
-      // Smooth zoom transition için
+      // Smooth zoom transition için - merkezi koru
       const targetZ = 3 / newScale;
-      cameraRef.current.position.z = targetZ;
+      cameraRef.current.position.set(0, 0, targetZ);
+      cameraRef.current.lookAt(0, 0, 0); // Her zaman merkeze bak
       
       // Label görünürlüğünü güncelle (debounced)
       clearTimeout(window.labelUpdateTimeout);
@@ -546,7 +547,8 @@ export default function App() {
                       0.1,
                       1000
                     );
-                    camera.position.z = 3;
+                    camera.position.set(0, 0, 3); // Kamerayı merkeze odakla
+                    camera.lookAt(0, 0, 0); // Merkeze bak
                     cameraRef.current = camera;
 
                     const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
@@ -595,7 +597,7 @@ export default function App() {
                     earthGroup.add(earthSphere);
                     scene.add(earthGroup);
                     earthGroupRef.current = earthGroup;
-                    earthGroup.position.set(-1, -1, -1);
+                    earthGroup.position.set(0, 0, 0); // Dünyayı merkeze taşı
                     earthGroup.scale.set(1, 1, 1);
 
                     // GeoJSON Wireframe - iOS performans optimizasyonu
