@@ -47,88 +47,96 @@ type GeoJSONFeature = {
   properties: { [key: string]: any };
 };
 
-// iOS mobil uyumlu gelişmiş text texture oluşturma
+// Mobil uyumlu text texture oluşturma - React Native için optimize edilmiş
 const createMobileTextTexture = (text: string, fontSize: number = 24): THREE.Texture => {
   try {
-    // Canvas boyutlarını optimize et
-    const canvasWidth = 512;
-    const canvasHeight = 128;
+    console.log(`Creating texture for: ${text}`);
     
-    // iOS güvenli canvas oluşturma
-    const canvas = iOSCanvasSupport.createSafeCanvas(canvasWidth, canvasHeight);
+    // Canvas boyutlarını küçült (mobil performans için)
+    const canvasWidth = 256;
+    const canvasHeight = 64;
     
-    if (!canvas) {
-      console.warn('Canvas not available for text texture');
-      return new THREE.Texture();
+    let canvas: any = null;
+    let ctx: any = null;
+    
+    // React Native ortamında farklı canvas stratejileri dene
+    if (Platform.OS === 'web') {
+      // Web için normal canvas
+      if (typeof document !== 'undefined') {
+        canvas = document.createElement('canvas');
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+        ctx = canvas.getContext('2d');
+      }
+    } else {
+      // React Native için - Expo GL canvas kullanmayı dene
+      try {
+        if (typeof OffscreenCanvas !== 'undefined') {
+          canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
+          ctx = canvas.getContext('2d');
+        } else if (typeof document !== 'undefined' && document.createElement) {
+          // Bazen React Native'de document mevcut olabiliyor
+          canvas = document.createElement('canvas');
+          canvas.width = canvasWidth;
+          canvas.height = canvasHeight;
+          ctx = canvas.getContext('2d');
+        }
+      } catch (e) {
+        console.log('OffscreenCanvas not available, trying alternative');
+      }
+    }
+    
+    if (!canvas || !ctx) {
+      console.warn(`Canvas not available for ${text}, falling back to simple sprite`);
+      // Canvas yoksa boş texture döndür, fallback sprite kullanılacak
+      const emptyTexture = new THREE.Texture();
+      emptyTexture.needsUpdate = true;
+      return emptyTexture;
     }
 
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
-    
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      console.warn('Canvas context not available');
-      return new THREE.Texture();
-    }
-
-    // iOS için optimized text rendering
+    // Context ayarları
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
     
-    // Anti-aliasing ve smooth rendering
-    ctx.imageSmoothingEnabled = true;
+    // Mobil için basit font ayarları
+    const adjustedFontSize = Math.min(fontSize, 20); // Maksimum font boyutu
+    const fontFamily = Platform.OS === 'ios' ? '-apple-system' : 
+                      Platform.OS === 'android' ? 'Roboto' : 'Arial';
+    
+    ctx.font = `bold ${adjustedFontSize}px ${fontFamily}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.imageSmoothingEnabled = true;
     
-    // Font ayarları - iOS uyumlu
-    const fontFamily = Platform.OS === 'ios' ? 'System' : 'Arial';
-    ctx.font = `bold ${fontSize}px ${fontFamily}`;
+    // Arka plan - sadece
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(5, canvasHeight/2 - adjustedFontSize/2 - 4, 
+                 canvasWidth - 10, adjustedFontSize + 8);
     
-    // Gölge efekti
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-    ctx.shadowBlur = 4;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 2;
+    // Text outline (stroke) önce
+    ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(text, canvasWidth / 2, canvasHeight / 2);
     
-    // Text boyutunu kontrol et ve gerekirse küçült
-    const textMetrics = ctx.measureText(text);
-    let adjustedFontSize = fontSize;
-    
-    while (textMetrics.width > canvasWidth - 20 && adjustedFontSize > 12) {
-      adjustedFontSize -= 2;
-      ctx.font = `bold ${adjustedFontSize}px ${fontFamily}`;
-    }
-    
-    // Arka plan (isteğe bağlı - şeffaf panel)
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    if (ctx.roundRect) {
-      ctx.roundRect(10, canvasHeight/2 - adjustedFontSize/2 - 8, 
-                    canvasWidth - 20, adjustedFontSize + 16, 8);
-    } else {
-      // Fallback: normal dikdörtgen
-      ctx.fillRect(10, canvasHeight/2 - adjustedFontSize/2 - 8, 
-                   canvasWidth - 20, adjustedFontSize + 16);
-    }
-    ctx.fill();
-    
-    // Text çizimi
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    // Text fill sonra
+    ctx.fillStyle = 'rgba(255, 255, 255, 1)';
     ctx.fillText(text, canvasWidth / 2, canvasHeight / 2);
     
-    // Outline
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.strokeText(text, canvasWidth / 2, canvasHeight / 2);
-
-    const texture = new THREE.CanvasTexture(canvas as any);
+    // Texture oluştur
+    const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
     texture.format = THREE.RGBAFormat;
+    texture.flipY = false; // React Native için önemli
     
+    console.log(`Texture created successfully for: ${text}`);
     return texture;
   } catch (error) {
-    console.warn('Mobile text texture creation failed:', error);
-    return new THREE.Texture();
+    console.warn(`Text texture creation failed for ${text}:`, error);
+    // Hata durumunda boş texture döndür
+    const emptyTexture = new THREE.Texture();
+    emptyTexture.needsUpdate = true;
+    return emptyTexture;
   }
 };
 
@@ -292,12 +300,15 @@ export default function App() {
       .filter(Boolean) as CountryLabel[];
   }, []);
 
-  // Zoom seviyesine göre label'ları filtrele
+  // Zoom seviyesine göre label'ları filtrele - mobil için optimize edilmiş
   const getVisibleLabels = (zoomLevel: number): CountryLabel[] => {
-    if (zoomLevel < 1.2) {
-      // Çok uzak - sadece Tier 1
+    // Mobil cihazlarda daha düşük threshold'lar kullan
+    const isWebPlatform = Platform.OS === 'web';
+    
+    if (zoomLevel < (isWebPlatform ? 1.2 : 0.8)) {
+      // Uzak zoom - sadece Tier 1 (büyük ülkeler)
       return countryLabels.filter(label => label.priority === 1);
-    } else if (zoomLevel < 2.0) {
+    } else if (zoomLevel < (isWebPlatform ? 2.0 : 1.5)) {
       // Orta zoom - Tier 1 ve 2
       return countryLabels.filter(label => label.priority <= 2);
     } else {
@@ -377,7 +388,7 @@ export default function App() {
     }
   };
 
-  // iOS uyumlu ve zoom tabanlı label sistemi
+  // Mobil uyumlu label sistemi - React Native için optimize edilmiş
   const addCountryLabelsToGlobe = () => {
     if (!earthGroupRef.current || !cameraRef.current) return;
     
@@ -404,59 +415,84 @@ export default function App() {
     
     // Zoom seviyesine göre görünür label'ları al
     const visibleLabels = getVisibleLabels(currentZoom);
-    console.log(`Zoom: ${currentZoom.toFixed(2)}, Visible labels: ${visibleLabels.length}`);
+    console.log(`Platform: ${Platform.OS}, Zoom: ${currentZoom.toFixed(2)}, Visible labels: ${visibleLabels.length}`);
     
     visibleLabels.forEach(({ name, position, priority }) => {
       try {
-        // iOS performans optimizasyonu
-        const shouldUseTexture = Platform.OS !== 'ios' || currentZoom > 1.5;
-        
-        if (shouldUseTexture) {
-          // Text texture ile detaylı label
-          const fontSize = Math.max(18, Math.min(32, 20 * currentZoom));
+        // Mobil ve web için farklı stratejiler
+        if (Platform.OS === 'web') {
+          // Web'de text texture kullan
+          const fontSize = Math.max(16, Math.min(28, 18 * currentZoom));
           const texture = createMobileTextTexture(name, fontSize);
           
-          if (texture && texture.image) {
+          if (texture && (texture.image || texture.source)) {
             const spriteMaterial = new THREE.SpriteMaterial({
               map: texture,
               transparent: true,
               alphaTest: 0.1,
-              depthTest: false, // iOS için önemli
+              depthTest: false,
               depthWrite: false,
             });
 
             const sprite = new THREE.Sprite(spriteMaterial);
             sprite.position.copy(position);
             
-            // Zoom ve öncelik tabanlı boyut
-            const baseSize = priority === 1 ? 0.3 : priority === 2 ? 0.25 : 0.2;
-            const sizeMultiplier = Math.max(0.5, Math.min(2, currentZoom * 0.8));
-            sprite.scale.set(baseSize * sizeMultiplier, baseSize * sizeMultiplier * 0.5, 1);
+            const baseSize = priority === 1 ? 0.4 : priority === 2 ? 0.3 : 0.25;
+            const sizeMultiplier = Math.max(0.6, Math.min(1.5, currentZoom * 0.7));
+            sprite.scale.set(baseSize * sizeMultiplier, baseSize * sizeMultiplier * 0.4, 1);
             
             earthGroupRef.current?.add(sprite);
             labelsRef.current.push(sprite);
-            console.log(`Added text label for ${name} (priority: ${priority})`);
+            console.log(`Added text label for ${name} (web)`);
           } else {
-            throw new Error('Texture creation failed');
+            throw new Error('Texture creation failed on web');
           }
         } else {
-          // Basit nokta sprite (iOS düşük zoom için)
-          const color = priority === 1 ? 0xffffff : priority === 2 ? 0xcccccc : 0x999999;
-          const size = priority === 1 ? 0.08 : priority === 2 ? 0.06 : 0.04;
-          const simpleSprite = createSimpleSprite(color, size * currentZoom);
-          simpleSprite.position.copy(position);
-          earthGroupRef.current?.add(simpleSprite);
-          labelsRef.current.push(simpleSprite);
-          console.log(`Added simple sprite for ${name} (priority: ${priority})`);
+          // React Native'de her zaman basit sprite kullan (daha güvenilir)
+          const colors = {
+            1: 0xffffff, // Beyaz - en önemli ülkeler
+            2: 0xffff00, // Sarı - orta önem
+            3: 0x00ffff  // Cyan - düşük önem
+          };
+          
+          const sizes = {
+            1: 0.12,
+            2: 0.10,
+            3: 0.08
+          };
+          
+          const color = colors[priority as keyof typeof colors] || 0xcccccc;
+          const baseSize = sizes[priority as keyof typeof sizes] || 0.08;
+          const finalSize = baseSize * Math.max(0.8, Math.min(2, currentZoom));
+          
+          const spriteMaterial = new THREE.SpriteMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.9,
+            sizeAttenuation: false, // Boyut kameraya göre değişmesin
+          });
+          
+          const sprite = new THREE.Sprite(spriteMaterial);
+          sprite.position.copy(position);
+          sprite.scale.set(finalSize, finalSize, 1);
+          
+          earthGroupRef.current?.add(sprite);
+          labelsRef.current.push(sprite);
+          console.log(`Added colored sprite for ${name} (mobile, priority: ${priority}, color: ${color.toString(16)})`);
         }
       } catch (error) {
         console.warn(`Label creation failed for ${name}:`, error);
-        // Hata durumunda basit sprite ekle
-        const fallbackColor = 0xff6666;
-        const fallbackSprite = createSimpleSprite(fallbackColor, 0.04);
+        // Hata durumunda kırmızı fallback sprite
+        const fallbackSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+          color: 0xff0000,
+          transparent: true,
+          opacity: 0.7,
+        }));
         fallbackSprite.position.copy(position);
+        fallbackSprite.scale.set(0.06, 0.06, 1);
         earthGroupRef.current?.add(fallbackSprite);
         labelsRef.current.push(fallbackSprite);
+        console.log(`Added fallback sprite for ${name}`);
       }
     });
   };
@@ -653,10 +689,11 @@ export default function App() {
                         }
                       });
 
-                      // İlk label ekleme - iOS uyumlu
+                      // İlk label ekleme - mobil uyumlu
                       setTimeout(() => {
+                        console.log('Adding initial labels...');
                         addCountryLabelsToGlobe();
-                      }, 1500); // Sahne tamamen yüklendikten sonra label'ları ekle
+                      }, Platform.OS === 'web' ? 1000 : 2500); // Mobilde daha geç başlat
                     }
 
                     updateMarkers();
