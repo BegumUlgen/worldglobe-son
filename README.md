@@ -1,50 +1,147 @@
-# Welcome to your Expo app 👋
+# 🌍 Dünya Küresi - 3D Globe with Country Labels
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+React Native ve Three.js kullanarak geliştirilmiş interaktif 3D dünya projesi. Yakınlaştırma yapıldıkça ülke ve bölge isimlerinin dinamik olarak gösterildiği Expo Go uyumlu mobil uygulama.
 
-## Get started
+## ✨ Özellikler
 
-1. Install dependencies
+- **3D İnteraktif Dünya**: Three.js ile gerçekçi dünya küresi
+- **Dinamik Ülke Etiketleri**: Zoom seviyesine göre ülke isimlerinin görünümü
+- **iOS Optimizasyonu**: iOS mobil cihazlar için özel performans iyileştirmeleri
+- **Smooth Zoom**: Yumuşak yakınlaştırma ve uzaklaştırma
+- **Mesafe Hesaplama**: İki nokta arasında havayolu mesafe hesaplaması
+- **Expo Go Uyumlu**: Development sırasında Expo Go ile test edilebilir
+
+## 🚀 Kurulum
+
+1. Bağımlılıkları yükleyin:
 
    ```bash
    npm install
    ```
 
-2. Start the app
+2. Uygulamayı başlatın:
 
    ```bash
    npx expo start
    ```
 
-In the output, you'll find options to open the app in a
+3. QR kodu ile Expo Go'dan açın veya:
+   - iOS Simulator: `i` tuşuna basın
+   - Android Emulator: `a` tuşuna basın
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## 📱 Platform Desteği
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- ✅ **iOS**: Tam optimizasyon ve smooth performans
+- ✅ **Android**: Destekleniyor
+- ✅ **Expo Go**: Development ve test için tam uyumlu
+- ✅ **Web**: Tarayıcı desteği
 
-## Get a fresh project
+## 🎮 Kullanım
 
-When you're ready, run:
+### Temel Kontroller
+- **Pan (Kaydırma)**: Dünyayı döndürmek için parmağınızla kaydırın
+- **Pinch to Zoom**: İki parmakla yakınlaştırın/uzaklaştırın
+- **Bottom Sheet**: Alt menü için üst kısımdaki ≡ simgesine dokunun
 
-```bash
-npm run reset-project
+### Ülke Etiketleri
+Zoom seviyesine göre farklı katmanlarda ülke isimleri görünür:
+- **Tier 1** (Uzak zoom): Türkiye, ABD, Çin, Rusya gibi büyük ülkeler
+- **Tier 2** (Orta zoom): Almanya, Fransa, İngiltere, Japonya vb.
+- **Tier 3** (Yakın zoom): Tüm desteklenen ülkeler
+
+### Mesafe Hesaplama
+1. Başlangıç noktasını seçin
+2. Varış noktasını seçin  
+3. "Mesafe Hesapla" butonuna dokunun
+4. Havayolu mesafesini km cinsinden görün
+
+## 🛠 Teknik Detaylar
+
+### Ana Teknolojiler
+- **React Native**: Mobil uygulama framework'ü
+- **Three.js**: 3D grafik rendering
+- **Expo**: Development ve deployment platformu
+- **@react-three/fiber**: React için Three.js renderer
+- **expo-gl**: WebGL integration
+
+### Performans Optimizasyonları
+
+#### iOS Özel İyileştirmeler:
+- Düşük polygon sayısı (iOS: 20, diğer: 24 segment)
+- Optimized pixel ratio (max 1.5 iOS için)
+- Canvas polyfill ile uyumluluk
+- Düşük wireframe çizgi sayısı (iOS: 150, diğer: 200)
+- Gesture sensitivity ayarları
+
+#### Genel Optimizasyonlar:
+- LOD (Level of Detail) sistemli etiketler
+- Debounced zoom güncellemeleri
+- Memory-efficient texture yönetimi
+- Platform-specific rendering ayarları
+
+### Dosya Yapısı
+```
+app/
+├── (tabs)/
+│   ├── index.tsx          # Ana dünya komponenti
+│   └── explore.tsx        # İkincil sayfa
+utils/
+├── canvasPolyfill.ts      # iOS canvas polyfill
+assets/
+├── custom.geo.json        # Ülke sınırları GeoJSON
+├── 2k_earth_nightmap.jpg  # Dünya texture'ı
+└── 8k_stars.jpg          # Yıldız arkaplanı
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## 🌟 Öne Çıkan Özellikler
 
-## Learn more
+### Smart Label System
+- Zoom seviyesine göre akıllı etiket filtreleme
+- Öncelik tabanlı görünürlük (3 tier sistem)
+- Performance-optimized text rendering
 
-To learn more about developing your project with Expo, look at the following resources:
+### iOS Compatibility
+- Canvas polyfill ile tam iOS desteği
+- Platform-specific performance tuning
+- Smooth gesture handling
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### Interactive Experience
+- Real-time zoom-based label updates
+- Smooth rotation with momentum
+- Distance calculation between any two points
 
-## Join the community
+## 🐛 Bilinen Sınırlamalar
 
-Join our community of developers creating universal apps.
+- Çok yüksek zoom seviyelerinde bazı iOS cihazlarda performance düşüşü olabilir
+- Text rendering için canvas desteği gereklidir
+- GeoJSON dosyası büyük olduğu için ilk yükleme biraz zaman alabilir
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## 🔧 Geliştirme
+
+### Development build oluşturma:
+```bash
+npx expo run:ios
+npx expo run:android
+```
+
+### Production build:
+```bash
+npx expo build:ios
+npx expo build:android
+```
+
+## 📝 Lisans
+
+Bu proje MIT lisansı altında lisanslanmıştır.
+
+## 🤝 Katkıda Bulunma
+
+1. Fork edin
+2. Feature branch oluşturun (`git checkout -b feature/amazing-feature`)
+3. Commit edin (`git commit -m 'Add amazing feature'`)
+4. Push edin (`git push origin feature/amazing-feature`)
+5. Pull Request açın
+
+## 📞 İletişim
+
+Sorularınız veya önerileriniz için issue açabilirsiniz.
